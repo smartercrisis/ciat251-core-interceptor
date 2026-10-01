@@ -1,2 +1,5 @@
 streamlit
+sentence-transformers
+numpy
+pandas
 pypdf
