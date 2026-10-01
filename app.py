@@ -2,10 +2,11 @@ import streamlit as st
 import re
 import hashlib
 import pypdf
+import textwrap
 
 st.set_page_config(page_title="CIAT25 Core Interceptor", layout="wide")
 
-st.title("CIAT25 Metabolic Core: Gate -1, Gate 0 & Anchor Scoring")
+st.title("CIAT25 Metabolic Core: Gate -1, Gate 0 & Anchor Scoring (Chunked)")
 
 # --- Gate -1: Ingress Filter ---
 def gate_minus_one(raw_input: str) -> tuple[str, bool, str]:
@@ -87,26 +88,36 @@ with col2:
         combined_input = f"{user_input}\n{file_text}".strip()
         file_present = uploaded_file is not None
         
-        # Execute Gate -1
-        clean_text, g1_pass, g1_msg = gate_minus_one(combined_input)
-        st.write(f"**Gate -1 Status:** {'PASS' if g1_pass else 'DROP'}")
-        st.code(g1_msg)
+        # Split payload into 5,000-character windows (Plan C Chunking)
+        chunks = textwrap.wrap(combined_input, width=5000, replace_whitespace=False)
+        st.info(f"Payload partitioned into {len(chunks)} sequential chunk(s) for metabolic routing.")
         
-        if not g1_pass:
-            st.stop()
+        for i, chunk in enumerate(chunks):
+            st.markdown(f"--- **Chunk {i+1} of {len(chunks)}** ---")
             
-        # Execute Gate 0
-        action, tokens, g0_msg = gate_zero(clean_text, file_present)
-        st.write(f"**Gate 0 Action:** {action}")
-        st.code(g0_msg)
-        
-        if action == "DROP" and strict_mode:
-            st.error("Pipeline terminated at Gate 0. Zero execution cost.")
-            st.stop()
+            # Execute Gate -1
+            clean_text, g1_pass, g1_msg = gate_minus_one(chunk)
+            st.write(f"**Gate -1 Status:** {'PASS' if g1_pass else 'DROP'}")
+            st.code(g1_msg)
             
-        # Execute Confidence Scoring
-        confidence, conf_msg = calculate_confidence_score(clean_text, tokens)
-        st.metric(label="CIAT Anchor Confidence Score", value=f"{confidence * 100}%")
-        st.code(conf_msg)
-        
-        st.success(f"Payload cleared for metabolic routing. Telemetry Log ID: {hashlib.sha256(clean_text.encode()).hexdigest()[:10]}")
+            if not g1_pass:
+                if strict_mode:
+                    st.error(f"Pipeline halted at Chunk {i+1} due to Gate -1 drop.")
+                    break
+                continue
+                
+            # Execute Gate 0
+            action, tokens, g0_msg = gate_zero(clean_text, file_present)
+            st.write(f"**Gate 0 Action:** {action}")
+            st.code(g0_msg)
+            
+            if action == "DROP" and strict_mode:
+                st.error(f"Pipeline terminated at Gate 0 for Chunk {i+1}. Zero execution cost.")
+                break
+                
+            # Execute Confidence Scoring
+            confidence, conf_msg = calculate_confidence_score(clean_text, tokens)
+            st.metric(label=f"Anchor Confidence Score (Chunk {i+1})", value=f"{confidence * 100}%")
+            st.code(conf_msg)
+            
+            st.success(f"Chunk {i+1} cleared. Log ID: {hashlib.sha256(clean_text.encode()).hexdigest()[:10]}")
