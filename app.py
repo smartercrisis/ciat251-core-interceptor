@@ -3,10 +3,16 @@ import re
 import hashlib
 import pypdf
 import textwrap
+import pandas as pd
+from datetime import datetime
 
 st.set_page_config(page_title="CIAT25 Core Interceptor", layout="wide")
 
-st.title("CIAT25 Metabolic Core: Gate -1, Gate 0 & Anchor Scoring (Chunked)")
+st.title("CIAT25 Metabolic Core: Gate -1, Gate 0 & Anchor Scoring")
+
+# Initialize session state for telemetry history
+if "telemetry_logs" not in st.session_state:
+    st.session_state.telemetry_logs = []
 
 # --- Gate -1: Ingress Filter ---
 def gate_minus_one(raw_input: str) -> tuple[str, bool, str]:
@@ -58,11 +64,15 @@ def calculate_confidence_score(sanitized_text: str, token_estimate: int) -> tupl
         
     return score, rating
 
-# --- UI Layout ---
-st.sidebar.header("Telemetry Config")
+# --- Sidebar Controls & Audit History ---
+st.sidebar.header("Telemetry Controls")
 strict_mode = st.sidebar.checkbox("Enforce Hard Drop Mode", value=True)
 
-col1, col2 = st.columns(2)
+if st.sidebar.button("Clear Log History"):
+    st.session_state.telemetry_logs = []
+    st.sidebar.success("Logs cleared.")
+
+col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("Inbound Payload")
@@ -70,7 +80,7 @@ with col1:
     uploaded_file = st.file_uploader("Upload thread context (txt, csv, pdf):", type=["txt", "csv", "pdf"])
 
 with col2:
-    st.subheader("Gate Telemetry Log")
+    st.subheader("Execution & Real-Time Stream")
     if st.button("Execute Pipeline"):
         file_text = ""
         if uploaded_file is not None:
@@ -88,36 +98,84 @@ with col2:
         combined_input = f"{user_input}\n{file_text}".strip()
         file_present = uploaded_file is not None
         
-        # Split payload into 5,000-character windows (Plan C Chunking)
         chunks = textwrap.wrap(combined_input, width=5000, replace_whitespace=False)
-        st.info(f"Payload partitioned into {len(chunks)} sequential chunk(s) for metabolic routing.")
+        st.info(f"Payload partitioned into {len(chunks)} sequential chunk(s).")
         
         for i, chunk in enumerate(chunks):
-            st.markdown(f"--- **Chunk {i+1} of {len(chunks)}** ---")
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
             
             # Execute Gate -1
             clean_text, g1_pass, g1_msg = gate_minus_one(chunk)
-            st.write(f"**Gate -1 Status:** {'PASS' if g1_pass else 'DROP'}")
-            st.code(g1_msg)
             
             if not g1_pass:
+                log_entry = {
+                    "Timestamp": timestamp,
+                    "Chunk": f"{i+1}/{len(chunks)}",
+                    "Gate -1": "DROP",
+                    "Gate 0": "N/A",
+                    "Tokens": 0,
+                    "Confidence": "0.0%",
+                    "Log ID": "FAILED_G1",
+                    "Message": g1_msg
+                }
+                st.session_state.telemetry_logs.append(log_entry)
+                st.error(f"Chunk {i+1} Dropped at Gate -1: {g1_msg}")
                 if strict_mode:
-                    st.error(f"Pipeline halted at Chunk {i+1} due to Gate -1 drop.")
                     break
                 continue
                 
             # Execute Gate 0
             action, tokens, g0_msg = gate_zero(clean_text, file_present)
-            st.write(f"**Gate 0 Action:** {action}")
-            st.code(g0_msg)
             
             if action == "DROP" and strict_mode:
-                st.error(f"Pipeline terminated at Gate 0 for Chunk {i+1}. Zero execution cost.")
+                log_entry = {
+                    "Timestamp": timestamp,
+                    "Chunk": f"{i+1}/{len(chunks)}",
+                    "Gate -1": "PASS",
+                    "Gate 0": "DROP",
+                    "Tokens": tokens,
+                    "Confidence": "0.0%",
+                    "Log ID": "FAILED_G0",
+                    "Message": g0_msg
+                }
+                st.session_state.telemetry_logs.append(log_entry)
+                st.error(f"Chunk {i+1} Dropped at Gate 0: {g0_msg}")
                 break
                 
             # Execute Confidence Scoring
             confidence, conf_msg = calculate_confidence_score(clean_text, tokens)
-            st.metric(label=f"Anchor Confidence Score (Chunk {i+1})", value=f"{confidence * 100}%")
-            st.code(conf_msg)
+            log_id = hashlib.sha256(clean_text.encode()).hexdigest()[:10]
             
-            st.success(f"Chunk {i+1} cleared. Log ID: {hashlib.sha256(clean_text.encode()).hexdigest()[:10]}")
+            log_entry = {
+                "Timestamp": timestamp,
+                "Chunk": f"{i+1}/{len(chunks)}",
+                "Gate -1": "PASS",
+                "Gate 0": action,
+                "Tokens": tokens,
+                "Confidence": f"{confidence * 100}%",
+                "Log ID": log_id,
+                "Message": conf_msg
+            }
+            st.session_state.telemetry_logs.append(log_entry)
+            st.success(f"Chunk {i+1}/{len(chunks)} Cleared | Log ID: {log_id} | Confidence: {confidence * 100}%")
+
+# --- Interactive Telemetry Inspector & Audit Panel ---
+st.markdown("---")
+st.subheader("CIAT25 Interactive Telemetry Inspector")
+
+if st.session_state.telemetry_logs:
+    df_logs = pd.DataFrame(st.session_state.telemetry_logs)
+    
+    # Display log table
+    st.dataframe(df_logs, use_container_width=True)
+    
+    # Export CSV Option
+    csv_data = df_logs.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Export Audit Log (CSV)",
+        data=csv_data,
+        file_name=f"ciat25_telemetry_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv"
+    )
+else:
+    st.caption("No execution telemetry recorded in this session yet. Run a prompt or document to populate logs.")
