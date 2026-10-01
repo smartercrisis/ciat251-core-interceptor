@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import hashlib
+import pypdf
 
 st.set_page_config(page_title="CIAT25 Core Interceptor", layout="wide")
 
@@ -65,16 +66,29 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Inbound Payload")
     user_input = st.text_area("Enter prompt or instruction thread:", height=150)
-uploaded_file = st.file_uploader("Upload thread context (txt/csv/pdf):", type=["txt", "csv", "pdf"])
-
+    uploaded_file = st.file_uploader("Upload thread context (txt, csv, pdf):", type=["txt", "csv", "pdf"])
 
 with col2:
     st.subheader("Gate Telemetry Log")
     if st.button("Execute Pipeline"):
+        file_text = ""
+        if uploaded_file is not None:
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+            if file_extension == 'pdf':
+                try:
+                    reader = pypdf.PdfReader(uploaded_file)
+                    for page in reader.pages:
+                        file_text += page.extract_text() or ""
+                except Exception as e:
+                    st.error(f"Error reading PDF: {e}")
+            elif file_extension in ['txt', 'csv']:
+                file_text = uploaded_file.read().decode("utf-8", errors="ignore")
+
+        combined_input = f"{user_input}\n{file_text}".strip()
         file_present = uploaded_file is not None
         
         # Execute Gate -1
-        clean_text, g1_pass, g1_msg = gate_minus_one(user_input)
+        clean_text, g1_pass, g1_msg = gate_minus_one(combined_input)
         st.write(f"**Gate -1 Status:** {'PASS' if g1_pass else 'DROP'}")
         st.code(g1_msg)
         
