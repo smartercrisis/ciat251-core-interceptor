@@ -65,7 +65,8 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Inbound Payload")
     user_input = st.text_area("Enter prompt or instruction thread:", height=150)
-    uploaded_file = st.file_uploader("Upload thread context (txt/csv):", type=["txt, csv"])
+uploaded_file = st.file_uploader("Upload thread context (txt/csv/pdf):", type=["txt", "csv", "pdf"])
+
 
 with col2:
     st.subheader("Gate Telemetry Log")
